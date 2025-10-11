@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TM-MONITOR</title>
+  <link rel="stylesheet" href="../css/main.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>TM-MONITOR</h1>
+    </header>
+    
+    <main>
+      <div class="search-section">
+        <div class="search-container">
+          <input 
+            type="text" 
+            id="eventUrlInput" 
+            placeholder="https://www.ticketmaster.com/event/0D00632B91FA10AAAA"
+            class="search-input"
+          >
+          <button id="addEventBtn" class="add-button">
+            <span id="addButtonText">Add</span>
+            <div id="addButtonLoader" class="button-loader" style="display: none;">
+              <div class="spinner"></div>
+            </div>
+          </button>
+        </div>
+        <div id="statusMessage" class="status-message" style="display: none;"></div>
+      </div>
+      
+      <div class="events-section">
+        <h2>Monitored Events</h2>
+        <div id="eventsList" class="events-list">
+          <!-- Events will be added here dynamically -->
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Notification Modal -->
+  <div id="notificationModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle">Event Notifications</h3>
+        <div class="modal-header-actions">
+          <button id="clearNotifications" class="clear-button">Clear All</button>
+          <button id="closeModal" class="close-button">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="modalContent">
+          <!-- Modal content will be populated here -->
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script src="../js/renderer.js"></script>
+</body>
+</html>
