@@ -1,5 +1,6 @@
 // renderer.js
-const ws = new WebSocket('ws://127.0.0.1:8000/ws');
+const API_URL = '64.79.67.10:8000';
+const ws = new WebSocket(`ws://${API_URL}/ws`);
 
 // DOM elements
 const eventUrlInput = document.getElementById('eventUrlInput');
@@ -453,7 +454,7 @@ async function handleClearNotifications() {
   
   if (confirm(`Are you sure you want to clear all notifications for "${eventName}"?`)) {
     try {
-      const response = await fetch(`http://127.0.0.1:8000/notifications/${currentOpenEventId}`, {
+      const response = await fetch(`http://${API_URL}/notifications/${currentOpenEventId}`, {
         method: 'DELETE'
       });
       
@@ -491,7 +492,7 @@ async function loadSavedNotifications(eventId) {
   }
   
   try {
-    const response = await fetch(`http://127.0.0.1:8000/notifications/${eventId}`);
+    const response = await fetch(`http://${API_URL}/notifications/${eventId}`);
     const data = await response.json();
     
     if (data.status === 'success') {
