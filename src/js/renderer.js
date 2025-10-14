@@ -1,6 +1,33 @@
 // renderer.js
 const API_URL = '64.79.67.10:8000';
-const ws = new WebSocket(`ws://${API_URL}/ws`);
+// const API_URL = '127.0.0.1:8000';
+
+// WebSocket connection management
+let ws = null;
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 10;
+let reconnectDelay = 1000; // Start with 1 second
+let maxReconnectDelay = 30000; // Max 30 seconds
+let isReconnecting = false;
+let heartbeatInterval = null;
+let lastPongTime = null;
+
+// Initialize WebSocket connection
+function initWebSocket() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    console.log('WebSocket already connected or connecting, skipping...');
+    return; // Already connected or connecting
+  }
+  
+  try {
+    console.log('Creating new WebSocket connection...');
+    ws = new WebSocket(`ws://${API_URL}/ws`);
+    setupWebSocketHandlers();
+  } catch (error) {
+    console.error('Failed to create WebSocket:', error);
+    scheduleReconnect();
+  }
+}
 
 // DOM elements
 const eventUrlInput = document.getElementById('eventUrlInput');
@@ -36,7 +63,8 @@ let eventsViewed = {};
 // Sound files for notifications (local files)
 const SOUNDS = {
   added: '../sounds/alert.mp3',
-  dropped: '../sounds/alert.mp3'
+  dropped: '../sounds/alert.mp3',
+  droped: '../sounds/alert.mp3'  // Backend sends 'droped' (missing 'p')
 };
 
 // Preloaded audio objects
@@ -44,14 +72,35 @@ let audioCache = {};
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
-  setupEventListeners();
+  try {
+    setupEventListeners();
+  } catch (error) {
+  }
   loadStoredEvents();
-  setupModalListeners();
+  try {
+    setupModalListeners();
+  } catch (error) {
+  }
+  try {
+    setupProxyModalListeners();
+  } catch (error) {
+  }
   preloadAudio();
+  
+  // Initialize WebSocket connection
+  initWebSocket();
 });
+
+// Track if listeners are already set up
+let listenersSetup = false;
 
 // Setup event listeners
 function setupEventListeners() {
+  if (listenersSetup) {
+    console.log('Event listeners already set up, skipping...');
+    return;
+  }
+  
   // Add event button click
   addEventBtn.addEventListener('click', handleAddEvent);
   
@@ -66,10 +115,24 @@ function setupEventListeners() {
   eventUrlInput.addEventListener('focus', () => {
     eventUrlInput.select();
   });
+  
+  listenersSetup = true;
+  console.log('Event listeners set up successfully');
 }
+
+// Track if modal listeners are already set up
+let modalListenersSetup = false;
+
+// Track if proxy modal listeners are already set up
+let proxyModalListenersSetup = false;
 
 // Setup modal listeners
 function setupModalListeners() {
+  if (modalListenersSetup) {
+    console.log('Modal listeners already set up, skipping...');
+    return;
+  }
+  
   // Close modal button
   closeModal.addEventListener('click', closeNotificationModal);
 
@@ -89,6 +152,9 @@ function setupModalListeners() {
       closeNotificationModal();
     }
   });
+  
+  modalListenersSetup = true;
+  console.log('Modal listeners set up successfully');
 }
 
 // Handle adding a new event
@@ -115,19 +181,19 @@ function handleAddEvent() {
   showStatusMessage('Adding event to monitoring...', 'info');
   
   // Send to backend
-  if (ws.readyState === WebSocket.OPEN) {
-    const eventId = extractEventId(eventUrl);
-    const eventName = extractEventName(eventUrl);
-    
-    ws.send(JSON.stringify({
-      type: 'add_event',
-      event_url: eventUrl,
-      event_id: eventId,
-      event_name: eventName
-    }));
-  } else {
+  const eventId = extractEventId(eventUrl);
+  const eventName = extractEventName(eventUrl);
+  
+  const success = sendMessage({
+    type: 'add_event',
+    event_url: eventUrl,
+    event_id: eventId,
+    event_name: eventName
+  });
+  
+  if (!success) {
     showLoader(false);
-    showStatusMessage('Connection to backend lost. Please try again.', 'error');
+    showStatusMessage('Connection to backend lost. Attempting to reconnect...', 'error');
   }
 }
 
@@ -596,82 +662,196 @@ function handleMonitorUpdate(msg) {
 function deleteEvent(eventId, eventName) {
   if (confirm(`Are you sure you want to delete "${eventName}" from monitoring?`)) {
     // Send delete request to backend
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'delete_event',
-        event_id: eventId,
-        event_name: eventName
-      }));
-    }
+    const success = sendMessage({
+      type: 'delete_event',
+      event_id: eventId,
+      event_name: eventName
+    });
     
     // Remove from local storage and UI immediately
     monitoredEvents = monitoredEvents.filter(event => event.id !== eventId);
     saveEventsToStorage();
     renderEventsList();
     
-    showStatusMessage(`✅ Deleted event: ${eventName}`, 'success');
+    if (success) {
+      showStatusMessage(`✅ Deleted event: ${eventName}`, 'success');
+    } else {
+      showStatusMessage(`⚠️ Deleted locally, but backend connection lost`, 'info');
+    }
   }
 }
 
-// WebSocket connection
-ws.onopen = () => {
-  console.log('✅ Connected to backend');
-  
-  // Send ping to test connection
-  ws.send(JSON.stringify({ type: 'ping' }));
-  
-  // Re-send all monitored events to backend
-  // monitoredEvents.forEach(event => {
-  //   ws.send(JSON.stringify({
-  //     type: 'add_event',
-  //     event_url: event.url,
-  //     event_id: event.id,
-  //     event_name: event.name
-  //   }));
-  // });
-};
+// Setup WebSocket event handlers
+function setupWebSocketHandlers() {
+  ws.onopen = () => {
+    console.log('✅ Connected to backend');
+    isReconnecting = false;
+    reconnectAttempts = 0;
+    reconnectDelay = 1000; // Reset delay
+    
+    // Update connection status
+    updateConnectionStatus(true);
+    
+    // Start heartbeat
+    startHeartbeat();
+    
+    // Send ping to test connection
+    sendMessage({ type: 'ping' });
+    
+    // Re-send all monitored events to backend after reconnection
+    if (monitoredEvents.length > 0) {
+      console.log('🔄 Re-sending monitored events to backend...');
+      monitoredEvents.forEach(event => {
+        sendMessage({
+          type: 'reconnect_event',
+          event_url: event.url,
+          event_id: event.id,
+          event_name: event.name
+        });
+      });
+    }
+  };
 
-ws.onmessage = (event) => {
-  const msg = JSON.parse(event.data);
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
 
-  switch (msg.type) {
-    case 'pong':
-      console.log('Backend says:', msg.message);
-      break;
+    switch (msg.type) {
+      case 'ping':
+        // Backend ping - just log it, don't respond to avoid ping-pong loop
+        console.log('Backend ping received:', msg.message);
+        lastPongTime = Date.now();
+        break;
+        
+      case 'pong':
+        console.log('Backend pong received:', msg.message);
+        lastPongTime = Date.now();
+        break;
 
-    case 'event_added':
-      // Event successfully added to backend
-      showLoader(false);
-      console.log('Event added:', msg);
-      addEventToMonitoring(eventUrlInput.value.trim(), msg.event_id, msg.event_name);
-      showStatusMessage(`✅ ${msg.message}`, 'success');
-      eventUrlInput.value = '';
-      eventUrlInput.focus();
-      break;
+      case 'event_added':
+        // Event successfully added to backend
+        showLoader(false);
+        console.log('Event added:', msg);
+        addEventToMonitoring(eventUrlInput.value.trim(), msg.event_id, msg.event_name);
+        showStatusMessage(`✅ ${msg.message}`, 'success');
+        eventUrlInput.value = '';
+        eventUrlInput.focus();
+        break;
 
-    case 'event_update':
-      updateEventStatus(msg.event_id, msg.status, msg.data);
-      break;
+      case 'event_reconnected':
+        // Event reconnected after WebSocket reconnection
+        console.log('Event reconnected:', msg);
+        // Don't add to monitoring again, just acknowledge
+        break;
 
-    case 'event_deleted':
-      console.log('Event deleted from backend:', msg.event_name);
-      showStatusMessage(`✅ ${msg.message}`, 'success');
-      break;
+      case 'event_update':
+        updateEventStatus(msg.event_id, msg.status, msg.data);
+        break;
 
-    case 'monitor_update':
-      handleMonitorUpdate(msg);
-      break;
+      case 'event_deleted':
+        console.log('Event deleted from backend:', msg.event_name);
+        showStatusMessage(`✅ ${msg.message}`, 'success');
+        break;
 
-    case 'error':
-      console.error('Backend error:', msg.message);
-      showLoader(false);
-      showStatusMessage(`❌ ${msg.message}`, 'error');
-      break;
+      case 'monitor_update':
+        handleMonitorUpdate(msg);
+        break;
 
-    default:
-      console.warn('Unknown message type:', msg);
+      case 'error':
+        console.error('Backend error:', msg.message);
+        showLoader(false);
+        showStatusMessage(`❌ ${msg.message}`, 'error');
+        break;
+
+      default:
+        console.warn('Unknown message type:', msg);
+    }
+  };
+
+  ws.onclose = (event) => {
+    console.log('❌ Disconnected from backend', event.code, event.reason);
+    updateConnectionStatus(false);
+    stopHeartbeat();
+    
+    if (!isReconnecting) {
+      scheduleReconnect();
+    }
+  };
+
+  ws.onerror = (err) => {
+    console.error('WebSocket error:', err);
+    updateConnectionStatus(false);
+  };
+}
+
+// Send message with error handling
+function sendMessage(message) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(JSON.stringify(message));
+      return true;
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      return false;
+    }
+  } else {
+    console.warn('WebSocket not connected, cannot send message:', message);
+    return false;
   }
-};
+}
+
+// Schedule reconnection with exponential backoff
+function scheduleReconnect() {
+  if (isReconnecting || reconnectAttempts >= maxReconnectAttempts) {
+    if (reconnectAttempts >= maxReconnectAttempts) {
+      console.error('❌ Max reconnection attempts reached. Please refresh the page.');
+      showStatusMessage('❌ Connection lost. Please refresh the page.', 'error');
+    }
+    return;
+  }
+
+  isReconnecting = true;
+  reconnectAttempts++;
+  
+  console.log(`🔄 Attempting to reconnect (${reconnectAttempts}/${maxReconnectAttempts}) in ${reconnectDelay}ms...`);
+  showStatusMessage(`🔄 Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`, 'info');
+  
+  setTimeout(() => {
+    initWebSocket();
+    // Exponential backoff with jitter
+    reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
+  }, reconnectDelay);
+}
+
+// Heartbeat mechanism
+function startHeartbeat() {
+  stopHeartbeat(); // Clear any existing interval
+  
+  heartbeatInterval = setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Only send ping if we haven't received any message in a while
+      if (lastPongTime && (Date.now() - lastPongTime) > 60000) { // 60 seconds
+        console.warn('⚠️ No message received in 60 seconds, sending ping...');
+        sendMessage({ type: 'ping', message: 'Frontend heartbeat' });
+      }
+    }
+  }, 30000); // Check every 30 seconds
+}
+
+function stopHeartbeat() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+}
+
+// Update connection status in UI
+function updateConnectionStatus(connected) {
+  const statusIndicator = document.getElementById('connectionStatus');
+  if (statusIndicator) {
+    statusIndicator.textContent = connected ? '🟢 Connected' : '🔴 Disconnected';
+    statusIndicator.className = connected ? 'status-connected' : 'status-disconnected';
+  }
+}
 
 // Update event status
 function updateEventStatus(eventId, status, data) {
@@ -687,5 +867,135 @@ function updateEventStatus(eventId, status, data) {
   }
 }
 
-ws.onclose = () => console.log('❌ Disconnected from backend');
-ws.onerror = (err) => console.error('WebSocket error:', err);
+// Proxy Management Functions
+function setupProxyModalListeners() {
+  if (proxyModalListenersSetup) {
+    console.log('Proxy modal listeners already set up, skipping...');
+    return;
+  }
+  
+  const closeProxyModal = document.getElementById('closeProxyModal');
+  const saveProxies = document.getElementById('saveProxies');
+  const loadProxies = document.getElementById('loadProxies');
+  const clearProxies = document.getElementById('clearProxies');
+  const proxyModal = document.getElementById('proxyModal');
+  
+  if (closeProxyModal) {
+    closeProxyModal.addEventListener('click', closeProxyModalFunc);
+  }
+  
+  if (saveProxies) {
+    saveProxies.addEventListener('click', saveProxiesToFile);
+  }
+  
+  if (loadProxies) {
+    loadProxies.addEventListener('click', loadProxiesFromFile);
+  }
+  
+  if (clearProxies) {
+    clearProxies.addEventListener('click', clearProxiesFromFile);
+  }
+  
+  if (proxyModal) {
+    proxyModal.addEventListener('click', (e) => {
+      if (e.target === proxyModal) {
+        closeProxyModalFunc();
+      }
+    });
+  }
+  
+  proxyModalListenersSetup = true;
+  console.log('Proxy modal listeners set up successfully');
+}
+
+function openProxyModal() {
+  const proxyModal = document.getElementById('proxyModal');
+  if (proxyModal) {
+    proxyModal.style.display = 'flex';
+    loadProxiesFromFile(); // Auto-load current proxies when opening
+  }
+}
+
+function closeProxyModalFunc() {
+  const proxyModal = document.getElementById('proxyModal');
+  if (proxyModal) {
+    proxyModal.style.display = 'none';
+  }
+}
+
+async function loadProxiesFromFile() {
+  try {
+    const response = await fetch(`http://${API_URL}/api/proxies`);
+    const data = await response.json();
+    
+    if (data.status === 'success') {
+      const proxyTextarea = document.getElementById('proxyTextarea');
+      if (proxyTextarea) {
+        proxyTextarea.value = data.proxies.join('\n');
+        showStatusMessage(`✅ Loaded ${data.proxies.length} proxies`, 'success');
+      }
+    } else {
+      showStatusMessage('❌ Failed to load proxies', 'error');
+    }
+  } catch (error) {
+    console.error('Error loading proxies:', error);
+    showStatusMessage('❌ Error loading proxies', 'error');
+  }
+}
+
+async function saveProxiesToFile() {
+  const proxyTextarea = document.getElementById('proxyTextarea');
+  if (!proxyTextarea) return;
+  
+  const proxyText = proxyTextarea.value.trim();
+  const proxies = proxyText.split('\n').filter(line => line.trim());
+  
+  try {
+    const response = await fetch(`http://${API_URL}/api/proxies`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ proxies: proxies })
+    });
+    
+    const data = await response.json();
+    
+    if (data.status === 'success') {
+      showStatusMessage(`✅ ${data.message}`, 'success');
+      closeProxyModalFunc();
+    } else {
+      showStatusMessage('❌ Failed to save proxies', 'error');
+    }
+  } catch (error) {
+    console.error('Error saving proxies:', error);
+    showStatusMessage('❌ Error saving proxies', 'error');
+  }
+}
+
+async function clearProxiesFromFile() {
+  if (!confirm('Are you sure you want to clear all proxies?')) {
+    return;
+  }
+  
+  try {
+    const response = await fetch(`http://${API_URL}/api/proxies`, {
+      method: 'DELETE'
+    });
+    
+    const data = await response.json();
+    
+    if (data.status === 'success') {
+      const proxyTextarea = document.getElementById('proxyTextarea');
+      if (proxyTextarea) {
+        proxyTextarea.value = '';
+      }
+      showStatusMessage(`✅ ${data.message}`, 'success');
+    } else {
+      showStatusMessage('❌ Failed to clear proxies', 'error');
+    }
+  } catch (error) {
+    console.error('Error clearing proxies:', error);
+    showStatusMessage('❌ Error clearing proxies', 'error');
+  }
+}

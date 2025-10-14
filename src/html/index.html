@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <!-- <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self' http://0.0.0.0:8000 ws://0.0.0.0:8000 http://127.0.0.1:8000 ws://127.0.0.1:8000; object-src 'none'; base-uri 'self';"> -->
+  <meta http-equiv="Content-Security-Policy" >
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TM-MONITOR</title>
   <link rel="stylesheet" href="../css/main.css">
@@ -10,6 +12,7 @@
   <div class="container">
     <header>
       <h1>TM-MONITOR</h1>
+      <div id="connectionStatus" class="connection-status">🟡 Connecting...</div>
     </header>
     
     <main>
@@ -21,11 +24,15 @@
             placeholder="https://www.ticketmaster.com/event/0D00632B91FA10AAAA"
             class="search-input"
           >
-          <button id="addEventBtn" class="add-button">
+          <button id="addEventBtn" class="add-button" >
             <span id="addButtonText">Add</span>
             <div id="addButtonLoader" class="button-loader" style="display: none;">
               <div class="spinner"></div>
             </div>
+          </button>
+          <button id="proxyManageBtn" class="proxy-button" onclick="openProxyModal()">
+            <span>🌐</span>
+            Proxies
           </button>
         </div>
         <div id="statusMessage" class="status-message" style="display: none;"></div>
@@ -53,6 +60,33 @@
       <div class="modal-body">
         <div id="modalContent">
           <!-- Modal content will be populated here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Proxy Management Modal -->
+  <div id="proxyModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Proxy Management</h3>
+        <div class="modal-header-actions">
+          <button id="saveProxies" class="save-button">Save</button>
+          <button id="closeProxyModal" class="close-button">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="proxy-section">
+          <label for="proxyTextarea">Proxy List (one per line):</label>
+          <textarea 
+            id="proxyTextarea" 
+            placeholder="Enter proxies in format: ip:port:username:password&#10;Example:&#10;137.155.54.4:13762:iK5o5WVYxl:Ivo2GI5861&#10;137.155.54.240:13998:iK5o5WVYxl:Ivo2GI5861"
+            rows="10"
+          ></textarea>
+          <div class="proxy-actions">
+            <button id="loadProxies" class="load-button">Load Current</button>
+            <button id="clearProxies" class="clear-button">Clear</button>
+          </div>
         </div>
       </div>
     </div>
