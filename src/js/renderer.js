@@ -283,6 +283,10 @@ function renderEventsList() {
             </div>
           </div>
           <div class="event-actions">
+            <button class="action-button open-url-button" onclick="openEventUrl('${event.url}')" title="Open in Browser">
+              <span>🌐</span>
+              Open
+            </button>
             <button class="action-button notification-button ${hasNewNotifications ? 'has-notifications' : ''}" onclick="openNotificationModal('${event.id}', '${event.name}')">
               <span>🔔</span>
               Notifications
@@ -997,5 +1001,27 @@ async function clearProxiesFromFile() {
   } catch (error) {
     console.error('Error clearing proxies:', error);
     showStatusMessage('❌ Error clearing proxies', 'error');
+  }
+}
+
+// Open Event URL Function
+async function openEventUrl(url) {
+  try {
+    // Open the URL in the system's default browser (Chrome, Edge, etc.)
+    if (window.electronAPI && window.electronAPI.openExternal) {
+      const result = await window.electronAPI.openExternal(url);
+      if (result.success) {
+        console.log(`🌐 Successfully opened event URL in default browser: ${url}`);
+      } else {
+        throw new Error(result.error || 'Failed to open URL');
+      }
+    } else {
+      // Fallback for development or if electronAPI is not available
+      window.open(url, '_blank');
+      console.log(`🌐 Opened event URL in new tab: ${url}`);
+    }
+  } catch (error) {
+    console.error('Error opening URL:', error);
+    showStatusMessage('❌ Failed to open URL', 'error');
   }
 }

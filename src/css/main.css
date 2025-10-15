@@ -436,6 +436,17 @@ main {
   transform: translateY(-1px);
 }
 
+.open-url-button {
+  background: #e3f2fd;
+  color: #1976d2;
+  border: 1px solid #bbdefb;
+}
+
+.open-url-button:hover {
+  background: #bbdefb;
+  transform: translateY(-1px);
+}
+
 .action-button:active {
   transform: translateY(0);
 }

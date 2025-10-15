@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -9,7 +9,7 @@ function createWindow() {
     width: 1400,
     height: 1200,
     webPreferences: { 
-      preload: path.join(__dirname, 'src', 'js', 'renderer.js'),
+      preload: path.join(__dirname, 'src', 'js', 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true
     },
@@ -35,5 +35,16 @@ function createWindow() {
     });
   }
 }
+
+// IPC handler for opening external URLs
+ipcMain.handle('open-external', async (event, url) => {
+  try {
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (error) {
+    console.error('Error opening external URL:', error);
+    return { success: false, error: error.message };
+  }
+});
 
 app.whenReady().then(createWindow);
