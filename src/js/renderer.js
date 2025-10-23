@@ -1,6 +1,6 @@
 // renderer.js
-const API_URL = '64.79.67.10:8000';
-// const API_URL = '127.0.0.1:8000';
+// const API_URL = '64.79.67.10:8000';
+const API_URL = '127.0.0.1:8000';
 
 // WebSocket connection management
 let ws = null;
@@ -48,6 +48,9 @@ let monitoredEvents = [];
 // Store monitor updates for each event
 let monitorUpdates = {};
 
+// Store connection status for each event
+let eventConnectionStatuses = {};
+
 // Track which events have already loaded saved notifications
 let loadedSavedNotifications = {};
 
@@ -59,6 +62,9 @@ let eventsWithNewNotifications = {};
 
 // Track which events have been viewed (to hide notification counts)
 let eventsViewed = {};
+
+// Debounce mechanism to prevent excessive re-rendering
+let renderTimeout = null;
 
 // Sound files for notifications (local files)
 const SOUNDS = {
@@ -72,23 +78,47 @@ let audioCache = {};
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('🔍 DOM Content Loaded - Initializing app...');
+  
   try {
     setupEventListeners();
+    console.log('🔍 Event listeners set up');
   } catch (error) {
+    console.error('🔍 Error setting up event listeners:', error);
   }
+  
+  console.log('🔍 About to load stored events...');
   loadStoredEvents();
+  
   try {
     setupModalListeners();
+    console.log('🔍 Modal listeners set up');
   } catch (error) {
+    console.error('🔍 Error setting up modal listeners:', error);
   }
+  
   try {
     setupProxyModalListeners();
+    console.log('🔍 Proxy modal listeners set up');
   } catch (error) {
+    console.error('🔍 Error setting up proxy modal listeners:', error);
   }
+  
   preloadAudio();
+  console.log('🔍 Audio preloaded');
+  
+  // Load initial connection statuses
+  loadConnectionStatuses();
   
   // Initialize WebSocket connection
   initWebSocket();
+  
+  // Load connection statuses after a short delay to ensure backend is ready
+  setTimeout(() => {
+    loadConnectionStatuses();
+  }, 1000);
+  
+  console.log('🔍 App initialization complete');
 });
 
 // Track if listeners are already set up
@@ -224,7 +254,16 @@ function addEventToMonitoring(eventUrl, eventId, eventName) {
   };
   
   monitoredEvents.push(newEvent);
+  
+  // Initialize connection status for new event
+  eventConnectionStatuses[eventId] = {
+    status: 'connecting',
+    message: 'Initializing connection...',
+    timestamp: Date.now() / 1000
+  };
+  
   saveEventsToStorage();
+  // Use direct render for new events to ensure they appear immediately
   renderEventsList();
 }
 
@@ -243,8 +282,24 @@ function extractEventName(url) {
   return 'Unknown Event';
 }
 
+// Debounced render function to prevent excessive re-rendering
+function debouncedRenderEventsList() {
+  console.log('🔍 Debounced render called');
+  if (renderTimeout) {
+    clearTimeout(renderTimeout);
+  }
+  renderTimeout = setTimeout(() => {
+    console.log('🔍 Executing debounced render...');
+    renderEventsList();
+  }, 100); // 100ms debounce
+}
+
 // Render events list
 function renderEventsList() {
+  // console.log('🔍 Rendering events list...');
+  // console.log('🔍 monitoredEvents:', monitoredEvents);
+  // console.log('🔍 eventsList element:', eventsList);
+  
   // Check if eventsList element exists
   if (!eventsList) {
     console.warn('eventsList element not found');
@@ -252,6 +307,7 @@ function renderEventsList() {
   }
   
   if (monitoredEvents.length === 0) {
+    console.log('🔍 No events to display, showing empty state');
     eventsList.innerHTML = `
       <div class="empty-state">
         <h3>No events being monitored</h3>
@@ -266,6 +322,20 @@ function renderEventsList() {
     const hasBeenViewed = eventsViewed[event.id] || false;
     const notificationCount = monitorUpdates[event.id] ? monitorUpdates[event.id].length : 0;
     
+    // Get connection status for this event
+    console.log("##############################")
+    console.log(event)
+    console.log(eventConnectionStatuses)
+    console.log("##############################")
+    const connectionStatus = eventConnectionStatuses[event.id] || { 
+      status: 'connecting', 
+      message: 'Initializing...' 
+    };
+    const connectionStatusClass = getConnectionStatusClass(connectionStatus.status);
+    const connectionStatusIcon = getConnectionStatusIcon(connectionStatus.status);
+    
+    // console.log(`🔗 Rendering event ${event.id} with connection status:`, connectionStatus);
+    
     // Only show notification count if there are notifications AND the event hasn't been viewed
     const shouldShowCount = notificationCount > 0 && !hasBeenViewed;
     
@@ -278,8 +348,13 @@ function renderEventsList() {
               ${hasNewNotifications ? '<span class="notification-indicator">🔔</span>' : ''}
             </h3>
             <a href="${event.url}" target="_blank" class="event-url">${event.url}</a>
-            <div class="event-status status-${event.status}">
+            <div class="event-status status-${event.status}" style="display: none;">
               ${event.status === 'monitoring' ? 'Monitoring' : 'Error'}
+            </div>
+            <div class="connection-status ${connectionStatusClass}">
+              <span class="connection-icon">${connectionStatusIcon}</span>
+              <span class="connection-text">${connectionStatus.status}</span>
+              <span class="connection-message">${connectionStatus.message}</span>
             </div>
           </div>
           <div class="event-actions">
@@ -310,10 +385,63 @@ function saveEventsToStorage() {
 
 // Load events from localStorage
 function loadStoredEvents() {
+  console.log('🔍 Loading stored events...');
   const stored = localStorage.getItem('monitoredEvents');
+  console.log('🔍 Stored events from localStorage:', stored);
+  
   if (stored) {
-    monitoredEvents = JSON.parse(stored);
-    renderEventsList();
+    try {
+      monitoredEvents = JSON.parse(stored);
+      console.log('🔍 Parsed monitoredEvents:', monitoredEvents);
+      
+      // Initialize connection status for existing events
+      monitoredEvents.forEach(event => {
+        console.log("$$$$$$$$$$$$$$$$$$$$$$$$")
+        console.log(event)
+        console.log("$$$$$$$$$$$$$$$$$$$$$$$$")
+        if (!eventConnectionStatuses[event.id]) {
+          eventConnectionStatuses[event.id] = {
+            status: 'connecting',
+            message: 'Loading connection status...',
+            timestamp: Date.now() / 1000
+          };
+        }
+      });
+
+      console.log("999999999999999999999999")
+      console.log(eventConnectionStatuses)
+      console.log("999999999999999999999999")
+      
+      console.log('🔍 About to render events list...');
+      // Use direct render for initial load to avoid debouncing issues
+      renderEventsList();
+    } catch (error) {
+      console.error('🔍 Error parsing stored events:', error);
+      monitoredEvents = [];
+    }
+  } else {
+    console.log('🔍 No stored events found');
+  }
+}
+
+// Load connection statuses from backend
+async function loadConnectionStatuses() {
+  try {
+    console.log('🔗 Loading connection statuses from backend...');
+    const response = await fetch(`http://${API_URL}/api/connection-status`);
+    const data = await response.json();
+    
+    console.log('🔗 Connection status response:', data);
+    
+    if (data.status === 'success') {
+      eventConnectionStatuses = data.connection_statuses || {};
+      console.log('🔗 Loaded connection statuses:', eventConnectionStatuses);
+      debouncedRenderEventsList(); // Re-render to show connection statuses
+    } else {
+      console.error('Failed to load connection statuses:', data.message);
+    }
+  } catch (error) {
+    console.error('Error loading connection statuses:', error);
   }
 }
 
@@ -437,7 +565,7 @@ function openNotificationModal(eventId, eventName) {
   eventsWithNewNotifications[eventId] = false;
   // Mark this event as viewed to hide notification count
   eventsViewed[eventId] = true;
-  renderEventsList(); // Update the UI to remove the indicators
+  debouncedRenderEventsList(); // Update the UI to remove the indicators
   
   loadSavedNotifications(eventId);
   notificationModal.style.display = 'flex';
@@ -459,49 +587,75 @@ function renderNotificationContent(eventId) {
   // Sort all updates by timestamp (most recent first)
   const sortedUpdates = [...updates].sort((a, b) => b.timestamp - a.timestamp);
   
+  // Group updates by timestamp and type (within 30 seconds)
+  const groupedUpdates = groupNotificationsByTime(sortedUpdates);
+  
   let content = '<div class="notification-content">';
   
-  if (sortedUpdates.length > 0) {
+  if (groupedUpdates.length > 0) {
     content += `
       <div class="update-section">
-        <h4 class="update-header timeline">📅 Activity Timeline (${sortedUpdates.length} updates)</h4>
+        <h4 class="update-header timeline">📅 Activity Timeline (${groupedUpdates.length} updates)</h4>
         <div class="updates-list">
     `;
     
-    sortedUpdates.forEach(update => {
-      const isAdded = update.update_type === 'added';
+    groupedUpdates.forEach(group => {
+      const isAdded = group.update_type === 'added';
       const statusIcon = isAdded ? '🎫' : '❌';
       const statusText = isAdded ? 'Available' : 'No Longer Available';
       const statusClass = isAdded ? 'added' : 'dropped';
       
-      update.seats.forEach(seat => {
-        content += `
-          <div class="seat-item ${statusClass}">
-            <div class="seat-status-indicator">
+      // Group seats by section and row for better organization
+      const seatsBySection = groupSeatsBySection(group.seats);
+      
+      content += `
+        <div class="notification-group ${statusClass}">
+          <div class="group-header">
+            <div class="group-status">
               <span class="status-icon">${statusIcon}</span>
               <span class="status-text">${statusText}</span>
+              <span class="seat-count">${group.seats.length} seat${group.seats.length > 1 ? 's' : ''}</span>
             </div>
-            <div class="seat-info">
-              <div class="seat-detail-row">
-                <span class="seat-label">Section:</span>
-                <span class="seat-value">${seat.section_name || 'Unknown'}</span>
-              </div>
-              <div class="seat-detail-row">
-                <span class="seat-label">Row:</span>
-                <span class="seat-value">${seat.section_row || 'N/A'}</span>
-              </div>
-              <div class="seat-detail-row">
-                <span class="seat-label">Seat:</span>
-                <span class="seat-value">${seat.place_number || 'N/A'}</span>
-              </div>
-            </div>
-            <div class="seat-meta">
-              <div class="seat-price">$${seat.price || 'N/A'}</div>
-              <div class="seat-time">${new Date(update.timestamp * 1000).toLocaleTimeString()}</div>
-            </div>
+            <div class="group-time">${new Date(group.timestamp * 1000).toLocaleTimeString()}</div>
           </div>
+          <div class="seats-table">
+            <table class="notification-table">
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>Row</th>
+                  <th>Seat</th>
+                  <th>Price</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+      `;
+      
+      // Add seats to table
+      group.seats.forEach(seat => {
+        if(seat.price == null || seat.price == undefined || seat.price == '' || seat.price == 'N/A') {
+          price = 'N/A';
+        } else {
+          price = seat.price/100.0;
+        }
+        content += `
+          <tr>
+            <td>${seat.section_name || 'Unknown'}</td>
+            <td>${seat.section_row || 'N/A'}</td>
+            <td>${seat.place_number || 'N/A'}</td>
+            <td>$${price || 'N/A'}</td>
+            <td>${seat.offer_description || 'N/A'}</td>
+          </tr>
         `;
       });
+      
+      content += `
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
     });
     
     content += '</div></div>';
@@ -509,6 +663,52 @@ function renderNotificationContent(eventId) {
   
   content += '</div>';
   modalContent.innerHTML = content;
+}
+
+// Helper function to group notifications by time and type
+function groupNotificationsByTime(updates) {
+  const groups = [];
+  const timeThreshold = 30; // 30 seconds
+  
+  updates.forEach(update => {
+    // Find existing group within time threshold
+    let foundGroup = groups.find(group => 
+      Math.abs(group.timestamp - update.timestamp) <= timeThreshold &&
+      group.update_type === update.update_type
+    );
+    
+    if (foundGroup) {
+      // Add seats to existing group
+      foundGroup.seats.push(...update.seats);
+      // Update timestamp to the most recent
+      if (update.timestamp > foundGroup.timestamp) {
+        foundGroup.timestamp = update.timestamp;
+      }
+    } else {
+      // Create new group
+      groups.push({
+        update_type: update.update_type,
+        timestamp: update.timestamp,
+        seats: [...update.seats]
+      });
+    }
+  });
+  
+  // Sort groups by timestamp (most recent first)
+  return groups.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+// Helper function to group seats by section and row
+function groupSeatsBySection(seats) {
+  const grouped = {};
+  seats.forEach(seat => {
+    const key = `${seat.section_name || 'Unknown'}-${seat.section_row || 'N/A'}`;
+    if (!grouped[key]) {
+      grouped[key] = [];
+    }
+    grouped[key].push(seat);
+  });
+  return grouped;
 }
 
 function closeNotificationModal() {
@@ -540,7 +740,7 @@ async function handleClearNotifications() {
         renderNotificationContent(currentOpenEventId);
         
         // Re-render the events list to remove indicators
-        renderEventsList();
+        debouncedRenderEventsList();
         
         showStatusMessage('✅ All notifications cleared', 'success');
       } else {
@@ -597,6 +797,60 @@ async function loadSavedNotifications(eventId) {
   }
 }
 
+// Helper functions for connection status display
+function getConnectionStatusClass(status) {
+  switch (status) {
+    case 'connected':
+      return 'connection-connected';
+    case 'connecting':
+      return 'connection-connecting';
+    case 'disconnected':
+      return 'connection-disconnected';
+    case 'error':
+      return 'connection-error';
+    default:
+      return 'connection-unknown';
+  }
+}
+
+function getConnectionStatusIcon(status) {
+  switch (status) {
+    case 'connected':
+      return '🟢';
+    case 'connecting':
+      return '🟡';
+    case 'disconnected':
+      return '🔴';
+    case 'error':
+      return '❌';
+    default:
+      return '❓';
+  }
+}
+
+// Handle connection status updates
+function handleConnectionStatusUpdate(msg) {
+  const eventId = msg.event_id;
+  const status = msg.status;
+  const message = msg.message;
+  const timestamp = msg.timestamp;
+  
+  console.log(`🔗 Connection status update received:`, msg);
+  console.log(`🔗 Event ${eventId}: ${status} - ${message}`);
+  
+  // Store the connection status
+  eventConnectionStatuses[eventId] = {
+    status: status,
+    message: message,
+    timestamp: timestamp
+  };
+  
+  console.log(`🔗 Updated connection statuses:`, eventConnectionStatuses);
+  
+  // Re-render the events list to show updated connection status
+  debouncedRenderEventsList();
+}
+
 // Handle monitor updates
 function handleMonitorUpdate(msg) {
   const eventId = msg.event_id;
@@ -629,7 +883,7 @@ function handleMonitorUpdate(msg) {
   }
   
   // Re-render the events list to show notification indicators
-  renderEventsList();
+  debouncedRenderEventsList();
   
   // If the notification modal is open for this event, refresh the content
   if (currentOpenEventId === eventId && notificationModal.style.display !== 'none') {
@@ -675,7 +929,7 @@ function deleteEvent(eventId, eventName) {
     // Remove from local storage and UI immediately
     monitoredEvents = monitoredEvents.filter(event => event.id !== eventId);
     saveEventsToStorage();
-    renderEventsList();
+    debouncedRenderEventsList();
     
     if (success) {
       showStatusMessage(`✅ Deleted event: ${eventName}`, 'success');
@@ -758,6 +1012,10 @@ function setupWebSocketHandlers() {
 
       case 'monitor_update':
         handleMonitorUpdate(msg);
+        break;
+
+      case 'connection_status_update':
+        handleConnectionStatusUpdate(msg);
         break;
 
       case 'error':
@@ -867,7 +1125,7 @@ function updateEventStatus(eventId, status, data) {
       event.data = data;
     }
     saveEventsToStorage();
-    renderEventsList();
+    debouncedRenderEventsList();
   }
 }
 
@@ -1025,3 +1283,59 @@ async function openEventUrl(url) {
     showStatusMessage('❌ Failed to open URL', 'error');
   }
 }
+
+// Test function to manually trigger connection status update
+function testConnectionStatus() {
+  console.log('🧪 Testing connection status update...');
+  const testMessage = {
+    type: 'connection_status_update',
+    event_id: 'test-event-123',
+    status: 'connected',
+    message: 'Manual test connection status',
+    timestamp: Date.now() / 1000
+  };
+  handleConnectionStatusUpdate(testMessage);
+}
+
+// Test function to check WebSocket connection
+function testWebSocketConnection() {
+  console.log('🧪 Testing WebSocket connection...');
+  console.log('WebSocket state:', ws ? ws.readyState : 'No WebSocket');
+  console.log('Connected clients should be > 0 in backend logs');
+  
+  // Send a test message
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendMessage({ type: 'ping', message: 'Frontend test ping' });
+    console.log('✅ Test ping sent');
+  } else {
+    console.log('❌ WebSocket not connected');
+  }
+}
+
+// Test function to trigger backend connection status update
+async function testBackendConnectionStatus() {
+  console.log('🧪 Testing backend connection status update...');
+  try {
+    const response = await fetch(`http://${API_URL}/api/test-connection-status`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        event_id: 'test-event-123',
+        status: 'connected',
+        message: 'Backend test connection status'
+      })
+    });
+    
+    const data = await response.json();
+    console.log('🔗 Backend test response:', data);
+  } catch (error) {
+    console.error('❌ Backend test failed:', error);
+  }
+}
+
+// Make test functions available globally
+window.testConnectionStatus = testConnectionStatus;
+window.testWebSocketConnection = testWebSocketConnection;
+window.testBackendConnectionStatus = testBackendConnectionStatus;
