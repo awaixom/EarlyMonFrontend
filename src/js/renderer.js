@@ -572,7 +572,9 @@ function openNotificationModal(eventId, eventName) {
 }
 
 function renderNotificationContent(eventId) {
+  console.log('🚀 renderNotificationContent called for event:', eventId);
   const updates = monitorUpdates[eventId] || [];
+  console.log('📊 Updates found:', updates.length);
   if (updates.length === 0) {
     modalContent.innerHTML = `
       <div style="text-align: center; padding: 40px 20px; color: #6c757d;">
@@ -605,8 +607,11 @@ function renderNotificationContent(eventId) {
       const statusText = isAdded ? 'Available' : 'No Longer Available';
       const statusClass = isAdded ? 'added' : 'dropped';
       
-      // Group seats by section and row for better organization
-      const seatsBySection = groupSeatsBySection(group.seats);
+      // Create compact display - group by section and row, show actual values
+      console.log('🔍 Creating compact display for seats:', group.seats.length);
+      
+      // Group seats by section and row for proper display
+      const seatsBySectionRow = groupSeatsBySectionRow(group.seats);
       
       content += `
         <div class="notification-group ${statusClass}">
@@ -632,20 +637,33 @@ function renderNotificationContent(eventId) {
               <tbody>
       `;
       
-      // Add seats to table
-      group.seats.forEach(seat => {
-        if(seat.price == null || seat.price == undefined || seat.price == '' || seat.price == 'N/A') {
-          price = 'N/A';
-        } else {
-          price = seat.price/100.0;
-        }
+      // Add grouped seats to table (one row per section/row combination)
+      Object.keys(seatsBySectionRow).forEach(key => {
+        const sectionRow = seatsBySectionRow[key];
+        const seats = sectionRow.seats;
+        
+        console.log('🔍 Processing section/row:', key, 'with seats:', seats.length);
+        
+        // Format comma-separated values
+        const seatNumbers = seats.map(seat => seat.place_number || 'N/A').join(', ');
+        const prices = seats.map(seat => {
+          if(seat.price == null || seat.price == undefined || seat.price == '' || seat.price == 'N/A') {
+            return 'N/A';
+          } else {
+            return '$' + (seat.price/100.0).toFixed(2);
+          }
+        }).join(', ');
+        const descriptions = seats.map(seat => seat.offer_description || 'N/A').join(', ');
+        
+        console.log('🔍 Formatted values:', { seatNumbers, prices, descriptions });
+        
         content += `
           <tr>
-            <td>${seat.section_name || 'Unknown'}</td>
-            <td>${seat.section_row || 'N/A'}</td>
-            <td>${seat.place_number || 'N/A'}</td>
-            <td>$${price || 'N/A'}</td>
-            <td>${seat.offer_description || 'N/A'}</td>
+            <td>${sectionRow.section_name || 'Unknown'}</td>
+            <td>${sectionRow.section_row || 'N/A'}</td>
+            <td>${seatNumbers}</td>
+            <td>${prices}</td>
+            <td>${descriptions}</td>
           </tr>
         `;
       });
@@ -696,6 +714,44 @@ function groupNotificationsByTime(updates) {
   
   // Sort groups by timestamp (most recent first)
   return groups.sort((a, b) => b.timestamp - a.timestamp);
+}
+
+// Helper function to group seats by section and row for compact display
+function groupSeatsBySectionRow(seats) {
+  const grouped = {};
+  console.log('🔍 Input seats for grouping:', seats);
+  
+  seats.forEach(seat => {
+    const sectionName = seat.section_name || 'Unknown';
+    const sectionRow = seat.section_row || 'N/A';
+    const key = `${sectionName}-${sectionRow}`;
+    
+    if (!grouped[key]) {
+      grouped[key] = {
+        section_name: sectionName,
+        section_row: sectionRow,
+        seats: []
+      };
+    }
+    
+    grouped[key].seats.push(seat);
+  });
+  
+  console.log('🔍 Grouped result:', grouped);
+  return grouped;
+}
+
+// Test function to verify grouping works
+function testGrouping() {
+  const testSeats = [
+    { section_name: '107', section_row: '5', place_number: '10', price: 5000, offer_description: 'x d1' },
+    { section_name: '107', section_row: '5', place_number: '11', price: 5000, offer_description: 'y d2' },
+    { section_name: '108', section_row: '4', place_number: '9', price: 7500, offer_description: 'z d3' }
+  ];
+  
+  const result = groupSeatsBySectionRow(testSeats);
+  console.log('🧪 Test grouping result:', result);
+  return result;
 }
 
 // Helper function to group seats by section and row
